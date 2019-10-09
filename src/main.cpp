@@ -6,18 +6,18 @@
 #include <Wire.h>
 #include <ESPAsyncWebServer.h>
 #include <SPIFFS.h>
-
+#include <HTTPClient.h>
 #define BME_CS 5
 #define LCD_ADDR 0x27 
 #define SEALEVELPRESSURE_HPA (1013.25)
 
 AsyncWebServer server(80);
-
+HTTPClient http;
 Adafruit_BME280 bme(BME_CS); // use hardware SPI (ESP32 VSPI)
 LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
 
-static const char* const AP_SSID = "CPH1605";
-static const char* const AP_PASS = "06052004";
+static const char* const AP_SSID = "hNiP";
+static const char* const AP_PASS = "LunarQueen12273";
 
 static float t{0}, h{0};
 
@@ -112,6 +112,15 @@ void setup() {
     }
     server.begin();
 }
+
+bool sendData() {
+    http.begin("mongyencute.tk", 8086, "/write?db=mycdata");
+    char writeBuf[512];
+    sprintf(writeBuf, "meas temp=%f,humd=%f", t, h);
+    int _latestResponse = http.POST(writeBuf);
+    return _latestResponse == 204;
+}
+int count = 0;
 bool display_IP{true};
 void loop() {
     lcd.clear();
@@ -131,6 +140,19 @@ void loop() {
         lcd.setCursor(0, 1);
         lcd.printf("Humd: %2.2f", h);
         display_IP = true;
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+        digitalWrite(2, HIGH);
+        if (count == 10) {
+            if (sendData()) {
+                Serial.println("Database OK");
+            } else {
+                Serial.println("Database failed");
+            }
+            count = 0;
+        } else {count++;}
+    } else {
+        digitalWrite(2, LOW);
     }
     delay(2000);
     h = bme.readHumidity();
