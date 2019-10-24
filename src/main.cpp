@@ -1,14 +1,14 @@
-#include <Wire.h>
-#include <SPI.h>
-#include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
-#include <LiquidCrystal_I2C.h>
-#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <ArduinoJson.h>
 #include <ESPAsyncWebServer.h>
-#include <SPIFFS.h>
 #include <HTTPClient.h>
+#include <LiquidCrystal_I2C.h>
+#include <SPI.h>
+#include <SPIFFS.h>
+#include <Wire.h>
 #define BME_CS 5
-#define LCD_ADDR 0x27 
+#define LCD_ADDR 0x27
 #define SEALEVELPRESSURE_HPA (1013.25)
 
 AsyncWebServer server(80);
@@ -16,9 +16,7 @@ HTTPClient http;
 Adafruit_BME280 bme(BME_CS); // use hardware SPI (ESP32 VSPI)
 LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
 
-static const char* const AP_SSID = "hNiP";
-static const char* const AP_PASS = "LunarQueen12273";
-
+String AP_SSID, AP_PASS;
 static float t{0}, h{0};
 
 static byte oC[] = {
@@ -42,7 +40,6 @@ static byte percent[] = {
     B00011,
 };
 
-
 String processor(const String &var) {
     if (var == "TEMPERATURE") {
         return String(t);
@@ -57,6 +54,26 @@ void setup() {
     if (!SPIFFS.begin(true)) {
         Serial.println("An error occurred while mounting SPIFFS");
     }
+    File file = SPIFFS.open("/wfcf.json", FILE_READ);
+    if (!file) {
+        Serial.println("An error has occurred while open file");
+        return;
+    }
+    String file_content = file.readString();
+    file.close();
+    Serial.printf("WiFi Config file: %s", file_content.c_str());
+    ArduinoJson::DynamicJsonDocument wifi_config(1024);
+    ArduinoJson::DeserializationError error = ArduinoJson::deserializeJson(wifi_config, file_content);
+    if (error) {
+        Serial.println(F("Failed to read file, using default configuration"));
+        AP_SSID = "CPH1605";
+        AP_PASS = "06052004";
+    } else {
+        ArduinoJson::JsonObject obj = wifi_config.as<ArduinoJson::JsonObject>();
+        AP_SSID = obj["ssid"].as<String>();
+        AP_PASS = obj["pass"].as<String>();
+    }
+    Serial.printf("Connecting to WiFi with SSID is %s, PASS is %s", AP_SSID.c_str(), AP_PASS.c_str());
     lcd.init();
     lcd.backlight();
     lcd.clear();
@@ -66,20 +83,54 @@ void setup() {
     lcd.print("Please wait...");
     lcd.createChar(0, oC);
     lcd.createChar(1, percent);
-    WiFi.begin(AP_SSID, AP_PASS);
-    delay(10000);
-    if (WiFi.status() == WL_CONNECTED) {
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print("Got IP:");
-        lcd.setCursor(0, 1);
-        lcd.print(WiFi.localIP());
+    WiFi.begin(AP_SSID.c_str(), AP_PASS.c_str());
+    pinMode(2, OUTPUT);
+    long long timeout = millis();
+    while (WiFi.status() != WL_CONNECTED) {
+        Serial.print(".");
+        delay(1000);
+        if (millis() - timeout >= 15000) {
+            Serial.println();
+            Serial.println("Cannot connect to WiFi, Please config WiFi");
+            WiFi.softAP("WiFi_Config", "12345678");
+            delay(5000);
+            server.on("/config", HTTP_GET, [](AsyncWebServerRequest *request) {
+                request->send(SPIFFS, "/wificf.html", "text/html", false, [](const String &var) -> String {
+                    if (var == "SSID") {
+                        return AP_SSID;
+                    } else if (var == "PASS") {
+                        return AP_PASS;
+                    } else {
+                        return String();
+                    }
+                });
+            });
+            server.on("/postcf", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+              String sdata = "";
+              for (size_t i = 0; i < len; i++) {
+                sdata += (char) data[i];
+              }
+              Serial.println(sdata);
+              SPIFFS.remove("/wfcf.json");
+              File file = SPIFFS.open("/wfcf.json", FILE_WRITE);
+              if (!file) {
+                Serial.println("ERROR creating config file");
+              } else {
+                if (file.print(sdata)) {
+                  Serial.println("Write config file succesfully");
+                } else {
+                  Serial.println("ERROR writing file");
+                }
+              }
+              file.close();
+              ESP.restart(); });
+            break;
+        }
     }
-    delay(10000);
-    server.on("/", HTTP_GET, [] (AsyncWebServerRequest *request) {
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(SPIFFS, "/index.html", "text/html", false, processor);
     });
-    server.on("/update.js", HTTP_GET, [] (AsyncWebServerRequest *request) {
+    server.on("/update.js", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(SPIFFS, "/update.js", "application/javascript", false, nullptr);
     });
     server.on("/temperature", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -100,15 +151,16 @@ void setup() {
     server.on("/webfonts/fa-solid-900.tff", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(SPIFFS, "/fa-solid-900.tff", "application/font-woff2", false, nullptr);
     });
-    server.on("/favicon.ico", HTTP_GET, [] (AsyncWebServerRequest *request) {
+    server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(SPIFFS, "/favicon.ico", "image/x-icon", false, nullptr);
     });
     server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(SPIFFS, "/style.css", "text/css", false, nullptr);
     });
-    if (! bme.begin(&Wire)) {
+    if (!bme.begin(&Wire)) {
         Serial.println("Could not find a valid BME280 sensor, check wiring!");
-        while (1);
+        while (1)
+            ;
     }
     server.begin();
 }
@@ -124,7 +176,7 @@ int count = 0;
 bool display_IP{true};
 void loop() {
     lcd.clear();
-    if (display_IP == true){
+    if (display_IP == true) {
         lcd.setCursor(0, 0);
         lcd.print("IP");
         lcd.setCursor(0, 1);
@@ -141,7 +193,7 @@ void loop() {
         lcd.printf("Humd: %2.2f", h);
         display_IP = true;
     }
-    if (WiFi.status() == WL_CONNECTED) {
+    if (WiFi.status() == WL_CONNECTED && WiFi.isConnected() == true) {
         digitalWrite(2, HIGH);
         if (count == 10) {
             if (sendData()) {
@@ -150,7 +202,9 @@ void loop() {
                 Serial.println("Database failed");
             }
             count = 0;
-        } else {count++;}
+        } else {
+            count++;
+        }
     } else {
         digitalWrite(2, LOW);
     }
@@ -158,4 +212,3 @@ void loop() {
     h = bme.readHumidity();
     t = bme.readTemperature();
 }
-

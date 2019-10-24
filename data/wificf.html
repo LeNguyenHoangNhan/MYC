@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<style>
+    body {
+        text-align: center;
+    }
+</style>
+
+<head>
+    <title>WiFi Config</title>
+</head>
+
+<body>
+    <p>Hello, it's look like the WiFi haven't connected yet, do you want to config it now?</p>
+    <p>Current WiFi</p>
+    <ul style="list-style-type: none;">
+        <li>SSID: %SSID%</li>
+        <li>PASS: %PASS%</li>
+    </ul>
+    <ul style="list-style-type: none;">
+        <li>
+            Input your new SSID here
+            <textarea id="SSID"></textarea>
+        </li>
+        <li>
+            Input your new PASS here
+            <textarea id="PASS"></textarea>
+        </li>
+    </ul>
+    <button onclick="SendData();">Config</button>
+    <p id="PASSLENGTHWARN"></p>
+</body>
+<script>
+    function SendData() {
+        var SSID = document.getElementById("SSID").value;
+        var PASS = document.getElementById("PASS").value;
+        if (PASS.length <= 6) {
+            console.log("PASS to short");
+            document.getElementById("PASSLENGTHWARN").innerHTML = "PASS to short";
+        } else {
+            console.log("PASS OK");
+            document.getElementById("PASSLENGTHWARN").innerHTML = "";
+            var xhttp = new XMLHttpRequest();
+            var url = "/postcf";
+            xhttp.open("POST", url, true);
+            xhttp.setRequestHeader("Content-type", "application/json");
+            xhttp.onreadystatechange = function () {
+                if (this.readyState == 4 && this.status == 200) {
+                    var jsn = JSON.parse(xhttp.responseText);
+                    console.log(jsn.ssid + " " + jsn.pass);
+                }
+            };
+            var data = JSON.stringify({ "ssid": SSID, "pass": PASS });
+            xhttp.send(data);
+            console.log("DATA" + data);
+        }
+        console.log("SSID: ");
+        console.log(SSID);
+        console.log("PASS: ");
+        console.log(PASS);
+    }
+</script>
+
+</html>
