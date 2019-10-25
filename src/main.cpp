@@ -16,8 +16,14 @@ HTTPClient http;
 Adafruit_BME280 bme(BME_CS); // use hardware SPI (ESP32 VSPI)
 LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
 
-String AP_SSID, AP_PASS;
+String STA_SSID, STA_PASS;
+String AP_SSID = "WiFi_Config";
+String AP_PASS = "12345678";
 static float t{0}, h{0};
+
+bool SPIFFS_status{false};
+bool WiFi_status{false};
+bool display_IP{true};
 
 static byte oC[] = {
     B00000,
@@ -40,60 +46,98 @@ static byte percent[] = {
     B00011,
 };
 
-String processor(const String &var) {
-    if (var == "TEMPERATURE") {
-        return String(t);
-    } else if (var == "HUMIDITY") {
-        return String(h);
-    }
-    return String();
+void lcd_err_pr(LiquidCrystal_I2C &lcd, const char *error_code) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("ERROR");
+    lcd.setCursor(0, 1);
+    lcd.print(error_code);
 }
-
+void lcd_clr_pr(LiquidCrystal_I2C &lcd, const String &first_row, const String &second_row) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print(first_row);
+    lcd.setCursor(0, 1);
+    lcd.print(second_row);
+}
+void lcd_clr_pr(LiquidCrystal_I2C &lcd, const char *first_row, const char *second_row) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print(first_row);
+    lcd.setCursor(0, 1);
+    lcd.print(second_row);
+}
+bool sendData() {
+    http.begin("mongyencute.tk", 8086, "/write?db=mycdata");
+    char writeBuf[512];
+    sprintf(writeBuf, "meas temp=%f,humd=%f", t, h);
+    int _latestResponse = http.POST(writeBuf);
+    return _latestResponse == 204;
+}
 void setup() {
     Serial.begin(9600);
-    if (!SPIFFS.begin(true)) {
-        Serial.println("An error occurred while mounting SPIFFS");
-    }
-    File file = SPIFFS.open("/wfcf.json", FILE_READ);
-    if (!file) {
-        Serial.println("An error has occurred while open file");
-        return;
-    }
-    String file_content = file.readString();
-    file.close();
-    Serial.printf("WiFi Config file: %s", file_content.c_str());
-    ArduinoJson::DynamicJsonDocument wifi_config(1024);
-    ArduinoJson::DeserializationError error = ArduinoJson::deserializeJson(wifi_config, file_content);
-    if (error) {
-        Serial.println(F("Failed to read file, using default configuration"));
-        AP_SSID = "CPH1605";
-        AP_PASS = "06052004";
-    } else {
-        ArduinoJson::JsonObject obj = wifi_config.as<ArduinoJson::JsonObject>();
-        AP_SSID = obj["ssid"].as<String>();
-        AP_PASS = obj["pass"].as<String>();
-    }
-    Serial.printf("Connecting to WiFi with SSID is %s, PASS is %s", AP_SSID.c_str(), AP_PASS.c_str());
     lcd.init();
     lcd.backlight();
-    lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("Initializing");
     lcd.setCursor(0, 1);
-    lcd.print("Please wait...");
-    lcd.createChar(0, oC);
-    lcd.createChar(1, percent);
-    WiFi.begin(AP_SSID.c_str(), AP_PASS.c_str());
-    pinMode(2, OUTPUT);
-    long long timeout = millis();
-    while (WiFi.status() != WL_CONNECTED) {
-        Serial.print(".");
+    lcd.print("Please wait");
+
+    if (!SPIFFS.begin(true)) {
+        Serial.println("[FATAL] ERROR mounting the SPIFFS, the WEB interface will not work, please contact ADMIN");
+        lcd_err_pr(lcd, "001");
         delay(1000);
-        if (millis() - timeout >= 15000) {
-            Serial.println();
-            Serial.println("Cannot connect to WiFi, Please config WiFi");
-            WiFi.softAP("WiFi_Config", "12345678");
-            delay(5000);
+    } else {
+        SPIFFS_status = true;
+    }
+    if (SPIFFS_status) {
+        File cfg_file = SPIFFS.open("/wfcf.json", "r");
+        if (!cfg_file) {
+            Serial.println("An error has occurred while open file");
+            Serial.println("Using default configuration");
+            STA_SSID = "CPH1605";
+            STA_PASS = "06052004";
+            lcd_err_pr(lcd, "002");
+            delay(1000);
+        } else {
+            String cfgf_content = cfg_file.readString();
+            Serial.printf("WiFi Config file: %s\n", cfgf_content.c_str());
+            ArduinoJson::DynamicJsonDocument wifi_config(1024);
+            ArduinoJson::DeserializationError error = ArduinoJson::deserializeJson(wifi_config, cfgf_content);
+            if (error) {
+                Serial.println(F("Failed to parse config file, using default configuration"));
+                STA_SSID = "CPH1605";
+                STA_PASS = "06052004";
+            } else {
+                ArduinoJson::JsonObject obj = wifi_config.as<ArduinoJson::JsonObject>();
+                STA_SSID = obj["ssid"].as<String>();
+                STA_PASS = obj["pass"].as<String>();
+            }
+        }
+        cfg_file.close();
+
+        Serial.printf("Connecting to WiFi with SSID is %s, PASS is %s", STA_SSID.c_str(), STA_PASS.c_str());
+        WiFi.mode(WIFI_MODE_APSTA);
+        WiFi.begin(STA_SSID.c_str(), STA_PASS.c_str());
+        WiFi.softAP(AP_SSID.c_str(), AP_PASS.c_str());
+
+        lcd.createChar(0, oC);
+        lcd.createChar(1, percent);
+
+        pinMode(2, OUTPUT);
+        long long timeout = millis();
+        lcd_clr_pr(lcd, "Connecting", "to WiFi");
+        while (WiFi.status() != WL_CONNECTED && !WiFi.isConnected()) {
+            Serial.print(".");
+            delay(1000);
+            if (millis() - timeout > 15000) {
+                lcd_err_pr(lcd, "004");
+                Serial.println("Timed out connect to WiFi");
+                delay(1000);
+                break;
+            }
+        }
+        if (SPIFFS_status) {
             server.on("/config", HTTP_GET, [](AsyncWebServerRequest *request) {
                 request->send(SPIFFS, "/wificf.html", "text/html", false, [](const String &var) -> String {
                     if (var == "SSID") {
@@ -124,56 +168,71 @@ void setup() {
               }
               file.close();
               ESP.restart(); });
-            break;
         }
+        server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+            request->send(SPIFFS, "/index.html", "text/html", false, [](const String &var) -> String {
+                if (var == "TEMPERATURE") {
+                    return String(t);
+                } else if (var == "HUMIDITY") {
+                    return String(h);
+                }
+                return String(); });
+        });
+        server.on("/update.js", HTTP_GET, [](AsyncWebServerRequest *request) {
+            request->send(SPIFFS, "/update.js", "application/javascript", false, nullptr);
+        });
+        server.on("/temperature", HTTP_GET, [](AsyncWebServerRequest *request) {
+            request->send_P(200, "text/plain", String(t).c_str());
+        });
+        server.on("/humidity", HTTP_GET, [](AsyncWebServerRequest *request) {
+            request->send_P(200, "text/plain", String(h).c_str());
+        });
+        server.on("/all.css", HTTP_GET, [](AsyncWebServerRequest *request) {
+            request->send(SPIFFS, "/all.css", "text/css", false, nullptr);
+        });
+        server.on("/webfonts/fa-solid-900.woff", HTTP_GET, [](AsyncWebServerRequest *request) {
+            request->send(SPIFFS, "/fa-solid-900.woff", "application/font-woff2", false, nullptr);
+        });
+        server.on("/webfonts/fa-solid-900.woff2", HTTP_GET, [](AsyncWebServerRequest *request) {
+            request->send(SPIFFS, "/fa-solid-900.woff2", "application/font-woff2", false, nullptr);
+        });
+        server.on("/webfonts/fa-solid-900.tff", HTTP_GET, [](AsyncWebServerRequest *request) {
+            request->send(SPIFFS, "/fa-solid-900.tff", "application/font-woff2", false, nullptr);
+        });
+        server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) {
+            request->send(SPIFFS, "/favicon.ico", "image/x-icon", false, nullptr);
+        });
+        server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request) {
+            request->send(SPIFFS, "/style.css", "text/css", false, nullptr);
+        });
+        server.begin();
     }
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(SPIFFS, "/index.html", "text/html", false, processor);
-    });
-    server.on("/update.js", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(SPIFFS, "/update.js", "application/javascript", false, nullptr);
-    });
-    server.on("/temperature", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send_P(200, "text/plain", String(t).c_str());
-    });
-    server.on("/humidity", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send_P(200, "text/plain", String(h).c_str());
-    });
-    server.on("/all.css", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(SPIFFS, "/all.css", "text/css", false, nullptr);
-    });
-    server.on("/webfonts/fa-solid-900.woff", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(SPIFFS, "/fa-solid-900.woff", "application/font-woff2", false, nullptr);
-    });
-    server.on("/webfonts/fa-solid-900.woff2", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(SPIFFS, "/fa-solid-900.woff2", "application/font-woff2", false, nullptr);
-    });
-    server.on("/webfonts/fa-solid-900.tff", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(SPIFFS, "/fa-solid-900.tff", "application/font-woff2", false, nullptr);
-    });
-    server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(SPIFFS, "/favicon.ico", "image/x-icon", false, nullptr);
-    });
-    server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(SPIFFS, "/style.css", "text/css", false, nullptr);
-    });
     if (!bme.begin(&Wire)) {
         Serial.println("Could not find a valid BME280 sensor, check wiring!");
-        while (1)
-            ;
+        lcd_err_pr(lcd, "006");
+        while (1) {
+        } // No point of continue;
     }
-    server.begin();
+    WiFi.onEvent([](WiFiEvent_t event) {
+        Serial.printf("[WiFi-event] event: %d\n", event);
+        switch (event) {
+        case SYSTEM_EVENT_STA_GOT_IP:
+            WiFi_status = true;
+            digitalWrite(2, HIGH);
+            break;
+        case SYSTEM_EVENT_STA_CONNECTED:
+            WiFi_status = true;
+            digitalWrite(2, HIGH);
+            break;
+        case SYSTEM_EVENT_STA_DISCONNECTED:
+            WiFi_status = false;
+            digitalWrite(2, LOW);
+            break;
+        }
+    });
 }
 
-bool sendData() {
-    http.begin("mongyencute.tk", 8086, "/write?db=mycdata");
-    char writeBuf[512];
-    sprintf(writeBuf, "meas temp=%f,humd=%f", t, h);
-    int _latestResponse = http.POST(writeBuf);
-    return _latestResponse == 204;
-}
-int count = 0;
-bool display_IP{true};
+int count{0};
 void loop() {
     lcd.clear();
     if (display_IP == true) {
@@ -193,20 +252,27 @@ void loop() {
         lcd.printf("Humd: %2.2f", h);
         display_IP = true;
     }
-    if (WiFi.status() == WL_CONNECTED && WiFi.isConnected() == true) {
-        digitalWrite(2, HIGH);
-        if (count == 10) {
+    Serial.printf("Loop time %d\n", count);
+    if (WiFi.status() == WL_CONNECTED && WiFi.isConnected() && WiFi.localIP() != 0) {
+        WiFi_status = true;
+    } else {
+        WiFi_status = false;
+    }
+    if (count == 10) {
+        count = 0;
+
+        Serial.printf("WiFi status: %s\n", WiFi_status ? "Ok" : "Not OK");
+        if (WiFi_status) {
             if (sendData()) {
                 Serial.println("Database OK");
             } else {
                 Serial.println("Database failed");
+                lcd_err_pr(lcd, "007");
+                delay(1000);
             }
-            count = 0;
-        } else {
-            count++;
         }
     } else {
-        digitalWrite(2, LOW);
+        count++;
     }
     delay(2000);
     h = bme.readHumidity();
