@@ -27,7 +27,7 @@
         console.log("PASSWORD:" + PASS);
         var xhttp = new XMLHttpRequest();
         var url = "/smfs?pwd="+PASS;
-        xhttp.open(GET, url, true);
+        xhttp.open("GET", url, true);
         xhttp.send();
         xhttp.onload = function() {
             if (xhttp.status == 200) {
@@ -38,6 +38,7 @@
                 document.getElementById("STATUS").innerHTML = "WRONG PASSWORD";
             } else if (xhttp.status == 400) {
                 console.log("Unlock OK");
+                document.getElementById("STATUS").innerHTML = "UNLOCK OK!";
             }
         }
     }

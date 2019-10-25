@@ -19,12 +19,14 @@ LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
 String STA_SSID, STA_PASS;
 String AP_SSID = "WiFi_Config";
 String AP_PASS = "12345678";
+String FAILSAFE_PWD;
+bool is_locked{false};
 static float t{0}, h{0};
 
 bool SPIFFS_status{false};
 bool WiFi_status{false};
 bool display_IP{true};
-
+bool IS_LOCKED{false};
 static byte oC[] = {
     B00000,
     B11000,
@@ -115,41 +117,115 @@ void setup() {
             }
         }
         cfg_file.close();
-
-        Serial.printf("Connecting to WiFi with SSID is %s, PASS is %s", STA_SSID.c_str(), STA_PASS.c_str());
-        WiFi.mode(WIFI_MODE_APSTA);
-        WiFi.begin(STA_SSID.c_str(), STA_PASS.c_str());
-        WiFi.softAP(AP_SSID.c_str(), AP_PASS.c_str());
-
-        lcd.createChar(0, oC);
-        lcd.createChar(1, percent);
-
-        pinMode(2, OUTPUT);
-        long long timeout = millis();
-        lcd_clr_pr(lcd, "Connecting", "to WiFi");
-        while (WiFi.status() != WL_CONNECTED && !WiFi.isConnected()) {
-            Serial.print(".");
-            delay(1000);
-            if (millis() - timeout > 15000) {
-                lcd_err_pr(lcd, "004");
-                Serial.println("Timed out connect to WiFi");
-                delay(1000);
-                break;
+        File fss_file = SPIFFS.open("/fss.txt", "r");
+        if (!fss_file) {
+            Serial.println("An error has occurred while open status file");
+            Serial.println("LOCKING UP THE DEVICE");
+            is_locked = true;
+            lcd_err_pr(lcd, "EEE");
+        } else {
+            String fss_status = fss_file.readString();
+            if (fss_status == "unlock") {
+                is_locked = false;
+            } else {
+                is_locked = true;
+                Serial.println("This device has been locked");
+                lcd_err_pr(lcd, "FFF");
             }
         }
-        if (SPIFFS_status) {
-            server.on("/config", HTTP_GET, [](AsyncWebServerRequest *request) {
-                request->send(SPIFFS, "/wificf.html", "text/html", false, [](const String &var) -> String {
-                    if (var == "SSID") {
-                        return AP_SSID;
-                    } else if (var == "PASS") {
-                        return AP_PASS;
+        fss_file.close();
+        File fspwd_file = SPIFFS.open("/fspw.txt", "r");
+        if (!fspwd_file) {
+            Serial.println("An error has occurred while open password file");
+            Serial.println("LOCKING UP THE DEVICE");
+            is_locked = true;
+            lcd_err_pr(lcd, "DDD");
+        } else {
+            FAILSAFE_PWD = fspwd_file.readString();
+            Serial.printf("Fail safe password: %s \n", FAILSAFE_PWD.c_str());
+        }
+        fspwd_file.close();
+    }
+    Serial.printf("Connecting to WiFi with SSID is %s, PASS is %s", STA_SSID.c_str(), STA_PASS.c_str());
+    WiFi.mode(WIFI_MODE_APSTA);
+    WiFi.begin(STA_SSID.c_str(), STA_PASS.c_str());
+    WiFi.softAP(AP_SSID.c_str(), AP_PASS.c_str());
+
+    lcd.createChar(0, oC);
+    lcd.createChar(1, percent);
+
+    pinMode(2, OUTPUT);
+    long long timeout = millis();
+    lcd_clr_pr(lcd, "Connecting", "to WiFi");
+    while (WiFi.status() != WL_CONNECTED && !WiFi.isConnected()) {
+        Serial.print(".");
+        delay(1000);
+        if (millis() - timeout > 15000) {
+            lcd_err_pr(lcd, "004");
+            Serial.println("Timed out connect to WiFi");
+            delay(1000);
+            break;
+        }
+    }
+    if (SPIFFS_status) {
+        server.on("/failsafe", HTTP_GET, [](AsyncWebServerRequest *request) {
+            request->send(SPIFFS, "/failsafe.html", "text/html", false, [](const String &var) -> String {
+                if (var == "STATUS") {
+                    if (is_locked) {
+                        return "LOCKED";
                     } else {
-                        return String();
+                        return "OPEN";
                     }
-                });
+                } else {
+                    return String();
+                }
             });
-            server.on("/postcf", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+        });
+        server.on("/smfs", HTTP_GET, [](AsyncWebServerRequest *request) {
+            String passwd_recv = request->getParam("pwd")->value();
+            Serial.println("passwd_recv: " + passwd_recv);
+            if (passwd_recv == FAILSAFE_PWD) {
+                if (!is_locked) {
+                    is_locked = true;
+                    request->send_P(200, "text/plain", "", nullptr);
+                } else if (is_locked) {
+                    is_locked = false;
+                    request->send_P(400, "text/plain", "", nullptr);
+                }
+                {
+                    SPIFFS.remove("/fss.txt");
+                    File fss_file = SPIFFS.open("/fss.txt", "w");
+                    for (int i = 0; i < 2; i++) {
+                        if (!fss_file) {
+                            Serial.println("An error has occurred while open status file");
+                            Serial.println("retrying!");
+                        } else {
+                            if (fss_file.print(is_locked ? "lock" : "unlock")) {
+                                Serial.println("Write config file succesfully");
+                            } else {
+                                Serial.println("ERROR writing file");
+                            }
+                        }
+                        fss_file.close();
+                        ESP.restart();
+                    }
+                }
+            } else {
+                request->send_P(300, "text/plain", "", nullptr);
+            }
+        });
+        server.on("/config", HTTP_GET, [](AsyncWebServerRequest *request) {
+            request->send(SPIFFS, "/wificf.html", "text/html", false, [](const String &var) -> String {
+                if (var == "SSID") {
+                    return AP_SSID;
+                } else if (var == "PASS") {
+                    return AP_PASS;
+                } else {
+                    return String();
+                }
+            });
+        });
+        server.on("/postcf", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
               String sdata = "";
               for (size_t i = 0; i < len; i++) {
                 sdata += (char) data[i];
@@ -168,7 +244,6 @@ void setup() {
               }
               file.close();
               ESP.restart(); });
-        }
         server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
             request->send(SPIFFS, "/index.html", "text/html", false, [](const String &var) -> String {
                 if (var == "TEMPERATURE") {
@@ -235,46 +310,56 @@ void setup() {
 int count{0};
 void loop() {
     lcd.clear();
-    if (display_IP == true) {
-        lcd.setCursor(0, 0);
-        lcd.print("IP");
-        lcd.setCursor(0, 1);
-        lcd.print(WiFi.localIP());
-        display_IP = false;
-    } else {
-        lcd.setCursor(0, 0);
-        lcd.printf("Temp: %2.2f", t);
-        lcd.setCursor(11, 0);
-        lcd.write(0);
-        lcd.setCursor(11, 1);
-        lcd.write(1);
-        lcd.setCursor(0, 1);
-        lcd.printf("Humd: %2.2f", h);
-        display_IP = true;
-    }
-    Serial.printf("Loop time %d\n", count);
-    if (WiFi.status() == WL_CONNECTED && WiFi.isConnected() && WiFi.localIP() != 0) {
-        WiFi_status = true;
-    } else {
-        WiFi_status = false;
-    }
-    if (count == 10) {
-        count = 0;
-
-        Serial.printf("WiFi status: %s\n", WiFi_status ? "Ok" : "Not OK");
-        if (WiFi_status) {
-            if (sendData()) {
-                Serial.println("Database OK");
-            } else {
-                Serial.println("Database failed");
-                lcd_err_pr(lcd, "007");
-                delay(1000);
-            }
+    if (is_locked) {
+        lcd_err_pr(lcd, "LLL");
+        Serial.println("Device is locked!");
+        while(1) {
+            delay(1000);
         }
+        return;
     } else {
-        count++;
+        Serial.println("Device is not locked!");
+        if (display_IP == true) {
+            lcd.setCursor(0, 0);
+            lcd.print("IP");
+            lcd.setCursor(0, 1);
+            lcd.print(WiFi.localIP());
+            display_IP = false;
+        } else {
+            lcd.setCursor(0, 0);
+            lcd.printf("Temp: %2.2f", t);
+            lcd.setCursor(11, 0);
+            lcd.write(0);
+            lcd.setCursor(11, 1);
+            lcd.write(1);
+            lcd.setCursor(0, 1);
+            lcd.printf("Humd: %2.2f", h);
+            display_IP = true;
+        }
+        Serial.printf("Loop time %d\n", count);
+        if (WiFi.status() == WL_CONNECTED && WiFi.isConnected() && WiFi.localIP() != 0) {
+            WiFi_status = true;
+        } else {
+            WiFi_status = false;
+        }
+        if (count == 10) {
+            count = 0;
+
+            Serial.printf("WiFi status: %s\n", WiFi_status ? "Ok" : "Not OK");
+            if (WiFi_status) {
+                if (sendData()) {
+                    Serial.println("Database OK");
+                } else {
+                    Serial.println("Database failed");
+                    lcd_err_pr(lcd, "007");
+                    delay(1000);
+                }
+            }
+        } else {
+            count++;
+        }
+        delay(2000);
+        h = bme.readHumidity();
+        t = bme.readTemperature();
     }
-    delay(2000);
-    h = bme.readHumidity();
-    t = bme.readTemperature();
 }
