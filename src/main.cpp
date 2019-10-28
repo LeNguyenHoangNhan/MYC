@@ -286,7 +286,7 @@ void setup() {
         Serial.println("Could not find a valid BME280 sensor, check wiring!");
         lcd_err_pr(lcd, "006");
         while (1) {
-        } // No point of continue;
+        } // No point of continue!
     }
     WiFi.onEvent([](WiFiEvent_t event) {
         Serial.printf("[WiFi-event] event: %d\n", event);
