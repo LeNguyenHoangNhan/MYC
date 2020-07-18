@@ -27,7 +27,7 @@ bool SPIFFS_status{false};
 bool WiFi_status{false};
 bool display_IP{true};
 bool IS_LOCKED{false};
-static byte oC[] = {
+static byte oCSymbol[] = {
     B00000,
     B11000,
     B11000,
@@ -174,8 +174,8 @@ void setup() {
     WiFi.begin(STA_SSID.c_str(), STA_PASS.c_str());
     WiFi.softAP(AP_SSID.c_str(), AP_PASS.c_str());
 
-    lcd.createChar(0, oC);
-    lcd.createChar(1, percent);
+    lcd.createChar(0, oCSymbol);
+    lcd.createChar(1, percentSymbol);
 
     pinMode(2, OUTPUT);
     long long timeout = millis();
@@ -248,7 +248,8 @@ void setup() {
                 }
             });
         });
-        server.on("/postcf", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+        server.on(
+            "/postcf", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
               String sdata = "";
               for (size_t i = 0; i < len; i++) {
                 sdata += (char) data[i];
@@ -305,11 +306,11 @@ void setup() {
         });
         server.begin();
     }
-    if (!bme.begin(&Wire)) {
+    if (!bme.begin()) {
         Serial.println("Could not find a valid BME280 sensor, check wiring!");
         lcd_err_pr(lcd, "006");
         while (1) {
-        } // No point of continue!
+        }  // No point of continue!
     }
     WiFi.onEvent([](WiFiEvent_t event) {
         Serial.printf("[WiFi-event] event: %d\n", event);
@@ -336,7 +337,7 @@ void loop() {
     if (is_locked) {
         lcd_err_pr(lcd, "LLL");
         Serial.println("Device is locked!");
-        while(1) {
+        while (1) {
             delay(1000);
         }
         return;
