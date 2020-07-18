@@ -13,13 +13,13 @@
 
 AsyncWebServer server(80);
 HTTPClient http;
-Adafruit_BME280 bme(BME_CS); // use hardware SPI (ESP32 VSPI)
+Adafruit_BME280 bme(BME_CS);  // use hardware SPI (ESP32 VSPI)
 LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
 
 String AP_SSID, AP_PASS;
-static float t{0}, h{0};
+static float currentTemp{0}, currentHumidity{0};
 
-static byte oC[] = {
+static byte oCSymbol[] = {
     B00000,
     B11000,
     B11000,
@@ -29,7 +29,7 @@ static byte oC[] = {
     B00011,
     B00000,
 };
-static byte percent[] = {
+static byte percentSymbol[] = {
     B00000,
     B11000,
     B11001,
@@ -40,11 +40,11 @@ static byte percent[] = {
     B00011,
 };
 
-String processor(const String &var) {
+String templateProcessor(const String &var) {
     if (var == "TEMPERATURE") {
-        return String(t);
+        return String(currentTemp);
     } else if (var == "HUMIDITY") {
-        return String(h);
+        return String(currentHumidity);
     }
     return String();
 }
@@ -74,15 +74,15 @@ void setup() {
         AP_PASS = obj["pass"].as<String>();
     }
     Serial.printf("Connecting to WiFi with SSID is %s, PASS is %s", AP_SSID.c_str(), AP_PASS.c_str());
-    lcd.init();
+    lcd.begin();
     lcd.backlight();
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("Initializing");
     lcd.setCursor(0, 1);
     lcd.print("Please wait...");
-    lcd.createChar(0, oC);
-    lcd.createChar(1, percent);
+    lcd.createChar(0, oCSymbol);
+    lcd.createChar(1, percentSymbol);
     WiFi.begin(AP_SSID.c_str(), AP_PASS.c_str());
     pinMode(2, OUTPUT);
     long long timeout = millis();
@@ -105,7 +105,8 @@ void setup() {
                     }
                 });
             });
-            server.on("/postcf", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            server.on(
+                "/postcf", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
               String sdata = "";
               for (size_t i = 0; i < len; i++) {
                 sdata += (char) data[i];
@@ -128,16 +129,16 @@ void setup() {
         }
     }
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(SPIFFS, "/index.html", "text/html", false, processor);
+        request->send(SPIFFS, "/index.html", "text/html", false, templateProcessor);
     });
     server.on("/update.js", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(SPIFFS, "/update.js", "application/javascript", false, nullptr);
     });
     server.on("/temperature", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send_P(200, "text/plain", String(t).c_str());
+        request->send_P(200, "text/plain", String(currentTemp).c_str());
     });
     server.on("/humidity", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send_P(200, "text/plain", String(h).c_str());
+        request->send_P(200, "text/plain", String(currentHumidity).c_str());
     });
     server.on("/all.css", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(SPIFFS, "/all.css", "text/css", false, nullptr);
@@ -157,7 +158,7 @@ void setup() {
     server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(SPIFFS, "/style.css", "text/css", false, nullptr);
     });
-    if (!bme.begin(&Wire)) {
+    if (!bme.begin()) {
         Serial.println("Could not find a valid BME280 sensor, check wiring!");
         while (1)
             ;
@@ -168,7 +169,7 @@ void setup() {
 bool sendData() {
     http.begin("mongyencute.tk", 8086, "/write?db=mycdata");
     char writeBuf[512];
-    sprintf(writeBuf, "meas temp=%f,humd=%f", t, h);
+    sprintf(writeBuf, "meas temp=%f,humd=%f", currentTemp, currentHumidity);
     int _latestResponse = http.POST(writeBuf);
     return _latestResponse == 204;
 }
@@ -184,13 +185,13 @@ void loop() {
         display_IP = false;
     } else {
         lcd.setCursor(0, 0);
-        lcd.printf("Temp: %2.2f", t);
+        lcd.printf("Temp: %2.2f", currentTemp);
         lcd.setCursor(11, 0);
         lcd.write(0);
         lcd.setCursor(11, 1);
         lcd.write(1);
         lcd.setCursor(0, 1);
-        lcd.printf("Humd: %2.2f", h);
+        lcd.printf("Humd: %2.2f", currentHumidity);
         display_IP = true;
     }
     if (WiFi.status() == WL_CONNECTED && WiFi.isConnected() == true) {
@@ -209,6 +210,6 @@ void loop() {
         digitalWrite(2, LOW);
     }
     delay(2000);
-    h = bme.readHumidity();
-    t = bme.readTemperature();
+    currentHumidity = bme.readHumidity();
+    currentTemp = bme.readTemperature();
 }
