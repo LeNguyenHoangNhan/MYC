@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>!!FAIL SAFE!!</title>
+</head>
+
+<body style="text-align: center;">
+    <div>
+        <p>Do you want to lock the device?</p>
+        <p>To lock or unlock the device, enter the password below and press Submit</p>
+    </div>
+    <div>
+        <p>Device status: %STATUS%</p>
+    </div>
+    <div>
+        <textarea id="PASSWD"></textarea>
+    </div>
+    <div>
+        <button onclick="submit()">Submit</button>
+    </div>
+    <p id="STATUS"></p>
+</body>
+<script>
+    function submit() {
+        var PASS = document.getElementById("PASSWD").value;
+        console.log("PASSWORD:" + PASS);
+        var xhttp = new XMLHttpRequest();
+        var url = "/smfs?pwd="+PASS;
+        xhttp.open("GET", url, true);
+        xhttp.send();
+        xhttp.onload = function() {
+            if (xhttp.status == 200) {
+                console.log("LOCK successful");
+                document.getElementById("STATUS").innerHTML = "LOCK OK!";
+            } else if (xhttp.status == 300) {
+                console.log("Wrong password!");
+                document.getElementById("STATUS").innerHTML = "WRONG PASSWORD";
+            } else if (xhttp.status == 400) {
+                console.log("Unlock OK");
+                document.getElementById("STATUS").innerHTML = "UNLOCK OK!";
+            }
+        }
+    }
+</script>
+</html>
