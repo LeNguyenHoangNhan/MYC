@@ -13,7 +13,7 @@
 
 AsyncWebServer server(80);
 HTTPClient http;
-Adafruit_BME280 bme(BME_CS); // use hardware SPI (ESP32 VSPI)
+Adafruit_BME280 bme(BME_CS);  // use hardware SPI (ESP32 VSPI)
 LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
 
 String STA_SSID, STA_PASS;
@@ -37,7 +37,7 @@ static byte oC[] = {
     B00011,
     B00000,
 };
-static byte percent[] = {
+static byte percentSymbol[] = {
     B00000,
     B11000,
     B11001,
@@ -78,7 +78,30 @@ bool sendData() {
 }
 void setup() {
     Serial.begin(9600);
-    lcd.init();
+    if (!SPIFFS.begin(true)) {
+        Serial.println("An error occurred while mounting SPIFFS");
+    }
+    File file = SPIFFS.open("/wfcf.json", FILE_READ);
+    if (!file) {
+        Serial.println("An error has occurred while open file");
+        return;
+    }
+    String file_content = file.readString();
+    file.close();
+    Serial.printf("WiFi Config file: %s", file_content.c_str());
+    ArduinoJson::DynamicJsonDocument wifi_config(1024);
+    ArduinoJson::DeserializationError error = ArduinoJson::deserializeJson(wifi_config, file_content);
+    if (error) {
+        Serial.println(F("Failed to read file, using default configuration"));
+        AP_SSID = "CPH1605";
+        AP_PASS = "06052004";
+    } else {
+        ArduinoJson::JsonObject obj = wifi_config.as<ArduinoJson::JsonObject>();
+        AP_SSID = obj["ssid"].as<String>();
+        AP_PASS = obj["pass"].as<String>();
+    }
+    Serial.printf("Connecting to WiFi with SSID is %s, PASS is %s", AP_SSID.c_str(), AP_PASS.c_str());
+    lcd.begin();
     lcd.backlight();
     lcd.setCursor(0, 0);
     lcd.print("Initializing");
