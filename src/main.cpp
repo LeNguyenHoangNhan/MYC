@@ -26,7 +26,7 @@ static float t{0}, h{0};
 bool SPIFFS_status{false};
 bool WiFi_status{false};
 bool display_IP{true};
-bool IS_LOCKED{false};
+
 static byte oCSymbol[] = {
     B00000,
     B11000,
@@ -223,7 +223,7 @@ void setup() {
                             Serial.println("An error has occurred while open status file");
                             Serial.println("retrying!");
                         } else {
-                            if (fss_file.print(is_locked ? "lock" : "unlock")) {
+                            if (fss_file.print(is_locked ? '1' : '0')) {
                                 Serial.println("Write config file succesfully");
                             } else {
                                 Serial.println("ERROR writing file");
